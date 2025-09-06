@@ -1,0 +1,281 @@
+---
+title: "fresh"
+output: html_document
+date: "2025-08-26"
+---
+
+
+# =========================
+# Step 4: Differential Expression Analysis (DEA)
+# Comparition of High vs Low MIR100HG in PAAD
+# =========================
+```{r}
+suppressMessages({
+  library(limma)
+  library(edgeR)
+  library(ggplot2)
+  library(pheatmap)
+  library(dplyr)
+  library(tibble)
+})
+```
+
+```{r}
+
+# if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+# BiocManager::install("limma")
+library(limma)
+
+expr_path  <- "/Users/shreyababare/Desktop/Data Science Final Project/mir100HG_FIN/output/filtered_expression_protein_coding_plus_MIR100HG.csv"
+strat_path <- "/Users/shreyababare/Desktop/Data Science Final Project/mir100HG_FIN/output/MIR100HG_top25_bottom25_stratification.csv"
+outdir     <- "/Users/shreyababare/Desktop/Data Science Final Project/mir100HG_FIN/output/Paad_DEA"
+
+df <- read.csv(expr_path, check.names = FALSE, stringsAsFactors = FALSE)
+
+stopifnot(all(c("gene_ID","HGNC_symbol","biotype") %in% colnames(df)))
+rownames(df) <- df$gene_ID
+
+symbol_map <- df$HGNC_symbol; names(symbol_map) <- rownames(df)
+
+df$gene_ID <- NULL
+df$HGNC_symbol <- NULL
+df$biotype <- NULL
+
+expr <- as.matrix(apply(df, 2, function(x) as.numeric(as.character(x))))
+rownames(expr) <- rownames(df)
+
+min_val <- min(expr, na.rm = TRUE)
+expected_floor <- log2(0.001)
+if (abs(min_val - expected_floor) < 1e-3) {
+  message(sprintf("OK: detected floor ~ log2(0.001) = %.4f; min = %.4f", expected_floor, min_val))
+} else {
+  warning(sprintf("Min %.4f not ~ log2(0.001)=%.4f. Verify scale.", min_val, expected_floor))
+}
+
+strat <- read.csv(strat_path, stringsAsFactors = FALSE)
+strat <- strat[strat$MIR100HG_Group %in% c("High_MIR100HG","Low_MIR100HG"), ]
+
+
+samples <- intersect(strat$Sample_ID, colnames(expr))
+if (length(samples) < 6) warning("Very few overlapping samples — check IDs.")
+strat <- strat[match(samples, strat$Sample_ID), ]
+expr_hilo <- expr[, samples, drop = FALSE]
+
+group <- factor(strat$MIR100HG_Group, levels = c("Low_MIR100HG","High_MIR100HG"))
+
+APPLY_QN <- FALSE
+if (APPLY_QN) {
+  expr_hilo <- normalizeBetweenArrays(expr_hilo, method = "quantile")
+}
+
+keep <- apply(expr_hilo, 1, function(x) var(x, na.rm = TRUE) > 0)
+expr_hilo <- expr_hilo[keep, , drop = FALSE]
+
+design <- model.matrix(~ 0 + group)
+colnames(design) <- levels(group)
+fit <- lmFit(expr_hilo, design)
+contrast <- makeContrasts(High_MIR100HG - Low_MIR100HG, levels = design)
+fit2 <- eBayes(contrasts.fit(fit, contrast), trend = TRUE, robust = TRUE)
+
+tt <- topTable(fit2, number = Inf, sort.by = "P")
+tt$HGNC_symbol <- symbol_map[rownames(tt)]
+
+write_deg_sets <- function(tt, prefix, fdr_levels = c(0.05, 0.01, 0.001), lfc_min = 1) {
+  full_path <- file.path(outdir, paste0(prefix, "_full_results.tsv"))
+  write.table(tt, full_path, sep = "\t", quote = FALSE, row.names = TRUE)
+  message("Wrote: ", full_path)
+  for (q in fdr_levels) {
+    filt <- tt[tt$adj.P.Val <= q & abs(tt$logFC) >= lfc_min, , drop = FALSE]
+    up   <- filt[filt$logFC >=  lfc_min, , drop = FALSE]
+    down <- filt[filt$logFC <= -lfc_min, , drop = FALSE]
+    base <- paste0(prefix, "_FDR", gsub("\\.", "", sprintf("%.3f", q)), "_LFC", lfc_min)
+    write.table(filt, file.path(outdir, paste0(base, "_ALL.tsv")),  sep = "\t", quote = FALSE, row.names = TRUE)
+    write.table(up,   file.path(outdir, paste0(base, "_UP.tsv")),   sep = "\t", quote = FALSE, row.names = TRUE)
+    write.table(down, file.path(outdir, paste0(base, "_DOWN.tsv")), sep = "\t", quote = FALSE, row.names = TRUE)
+    message(sprintf("FDR<=%.3f & |log2FC|>=%.1f -> ALL:%d UP:%d DOWN:%d",
+                    q, lfc_min, nrow(filt), nrow(up), nrow(down)))
+  }
+}
+
+write_deg_sets(tt, prefix = "DEA_PAAD_Tumor_High_vs_Low")
+
+# ---- Quick console peek ----
+cat("\nGroup sizes:\n")
+print(table(group))
+
+
+```
+# For Skin tumor
+
+```{r}
+############################################################
+# DEA: SKCM Tumor (High vs Low MIR100HG) using limma-trend
+############################################################
+
+# if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+# BiocManager::install("limma")
+library(limma)
+
+strat_path <- "/Users/shreyababare/Desktop/Data Science Final Project/mir100HG_FIN/output/MIR100HG_top25_bottom25_stratification_SKCM.csv"
+expr_path  <- "/Users/shreyababare/Desktop/Data Science Final Project/mir100HG_FIN/output/filtered_expression_protein_coding_plus_MIR100HG_SKCM.csv"
+outdir     <- "/Users/shreyababare/Desktop/Data Science Final Project/mir100HG_FIN/output/DEA_SKCM"
+
+df <- read.csv(expr_path, check.names = FALSE, stringsAsFactors = FALSE)
+
+stopifnot(all(c("gene_ID","HGNC_symbol","biotype") %in% colnames(df)))
+rownames(df) <- df$gene_ID
+
+symbol_map <- df$HGNC_symbol; names(symbol_map) <- rownames(df)
+
+df$gene_ID <- NULL
+df$HGNC_symbol <- NULL
+df$biotype <- NULL
+
+expr <- as.matrix(apply(df, 2, function(x) as.numeric(as.character(x))))
+rownames(expr) <- rownames(df)
+
+min_val <- min(expr, na.rm = TRUE)
+expected_floor <- log2(0.001)
+if (abs(min_val - expected_floor) < 1e-3) {
+  message(sprintf("OK: detected floor ~ log2(0.001) = %.4f; min = %.4f", expected_floor, min_val))
+} else {
+  warning(sprintf("Min %.4f not ~ log2(0.001)=%.4f. Verify scale.", min_val, expected_floor))
+}
+
+strat <- read.csv(strat_path, stringsAsFactors = FALSE)
+strat <- strat[strat$MIR100HG_Group %in% c("High_MIR100HG","Low_MIR100HG"), ]
+
+samples <- intersect(strat$Sample_ID, colnames(expr))
+if (length(samples) < 6) warning("Very few overlapping samples — check IDs.")
+strat <- strat[match(samples, strat$Sample_ID), ]
+expr_hilo <- expr[, samples, drop = FALSE]
+
+group <- factor(strat$MIR100HG_Group, levels = c("Low_MIR100HG","High_MIR100HG"))
+
+APPLY_QN <- FALSE
+if (APPLY_QN) {
+  expr_hilo <- normalizeBetweenArrays(expr_hilo, method = "quantile")
+}
+
+keep <- apply(expr_hilo, 1, function(x) var(x, na.rm = TRUE) > 0)
+expr_hilo <- expr_hilo[keep, , drop = FALSE]
+
+design <- model.matrix(~ 0 + group)
+colnames(design) <- levels(group)
+fit <- lmFit(expr_hilo, design)
+contrast <- makeContrasts(High_MIR100HG - Low_MIR100HG, levels = design)
+fit2 <- eBayes(contrasts.fit(fit, contrast), trend = TRUE, robust = TRUE)
+
+tt <- topTable(fit2, number = Inf, sort.by = "P")
+tt$HGNC_symbol <- symbol_map[rownames(tt)]
+
+write_deg_sets <- function(tt, prefix, fdr_levels = c(0.05, 0.01, 0.001), lfc_min = 1) {
+  full_path <- file.path(outdir, paste0(prefix, "_full_results.tsv"))
+  write.table(tt, full_path, sep = "\t", quote = FALSE, row.names = TRUE)
+  message("Wrote: ", full_path)
+  for (q in fdr_levels) {
+    filt <- tt[tt$adj.P.Val <= q & abs(tt$logFC) >= lfc_min, , drop = FALSE]
+    up   <- filt[filt$logFC >=  lfc_min, , drop = FALSE]
+    down <- filt[filt$logFC <= -lfc_min, , drop = FALSE]
+    base <- paste0(prefix, "_FDR", gsub("\\.", "", sprintf("%.3f", q)), "_LFC", lfc_min)
+    write.table(filt, file.path(outdir, paste0(base, "_ALL.tsv")),  sep = "\t", quote = FALSE, row.names = TRUE)
+    write.table(up,   file.path(outdir, paste0(base, "_UP.tsv")),   sep = "\t", quote = FALSE, row.names = TRUE)
+    write.table(down, file.path(outdir, paste0(base, "_DOWN.tsv")), sep = "\t", quote = FALSE, row.names = TRUE)
+    message(sprintf("FDR<=%.3f & |log2FC|>=%.1f -> ALL:%d UP:%d DOWN:%d",
+                    q, lfc_min, nrow(filt), nrow(up), nrow(down)))
+  }
+}
+
+write_deg_sets(tt, prefix = "DEA_SKCM_Tumor_High_vs_Low")
+
+cat("\nGroup sizes:\n")
+print(table(group))
+
+```
+
+
+```{r}
+############################################################
+# DEA: LUAD Tumor (High vs Low MIR100HG) using limma-trend
+############################################################
+
+# if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+# BiocManager::install("limma")
+library(limma)
+
+expr_path  <- "/Users/shreyababare/Desktop/Data Science Final Project/mir100HG_FIN/output/LUAD_filtered_expression_proteinCoding_plus_MIR100HG.csv"
+strat_path <- "/Users/shreyababare/Desktop/Data Science Final Project/mir100HG_FIN/output/MIR100HG_top25_bottom25_stratification_LUAD.csv"
+outdir     <- "/Users/shreyababare/Desktop/Data Science Final Project/mir100HG_FIN/output/DEA_LUAD"
+
+df <- read.csv(expr_path, check.names = FALSE, stringsAsFactors = FALSE)
+
+stopifnot(all(c("gene_ID","HGNC_symbol","biotype") %in% colnames(df)))
+rownames(df) <- df$gene_ID
+
+symbol_map <- df$HGNC_symbol; names(symbol_map) <- rownames(df)
+
+df$gene_ID <- NULL
+df$HGNC_symbol <- NULL
+df$biotype <- NULL
+
+expr <- as.matrix(apply(df, 2, function(x) as.numeric(as.character(x))))
+rownames(expr) <- rownames(df)
+
+min_val <- min(expr, na.rm = TRUE)
+expected_floor <- log2(0.001)
+if (abs(min_val - expected_floor) < 1e-3) {
+  message(sprintf("OK: detected floor ~ log2(0.001) = %.4f; min = %.4f", expected_floor, min_val))
+} else {
+  warning(sprintf("Min %.4f not ~ log2(0.001)=%.4f. Verify scale.", min_val, expected_floor))
+}
+
+strat <- read.csv(strat_path, stringsAsFactors = FALSE)
+strat <- strat[strat$MIR100HG_Group %in% c("High_MIR100HG","Low_MIR100HG"), ]
+
+samples <- intersect(strat$Sample_ID, colnames(expr))
+if (length(samples) < 6) warning("Very few overlapping samples — check IDs.")
+strat <- strat[match(samples, strat$Sample_ID), ]
+expr_hilo <- expr[, samples, drop = FALSE]
+
+group <- factor(strat$MIR100HG_Group, levels = c("Low_MIR100HG","High_MIR100HG"))
+
+APPLY_QN <- FALSE
+if (APPLY_QN) {
+  expr_hilo <- normalizeBetweenArrays(expr_hilo, method = "quantile")
+}
+
+keep <- apply(expr_hilo, 1, function(x) var(x, na.rm = TRUE) > 0)
+expr_hilo <- expr_hilo[keep, , drop = FALSE]
+
+design <- model.matrix(~ 0 + group)
+colnames(design) <- levels(group)
+fit <- lmFit(expr_hilo, design)
+contrast <- makeContrasts(High_MIR100HG - Low_MIR100HG, levels = design)
+fit2 <- eBayes(contrasts.fit(fit, contrast), trend = TRUE, robust = TRUE)
+
+tt <- topTable(fit2, number = Inf, sort.by = "P")
+tt$HGNC_symbol <- symbol_map[rownames(tt)]
+
+write_deg_sets <- function(tt, prefix, fdr_levels = c(0.05, 0.01, 0.001), lfc_min = 1) {
+  full_path <- file.path(outdir, paste0(prefix, "_full_results.tsv"))
+  write.table(tt, full_path, sep = "\t", quote = FALSE, row.names = TRUE)
+  message("Wrote: ", full_path)
+  for (q in fdr_levels) {
+    filt <- tt[tt$adj.P.Val <= q & abs(tt$logFC) >= lfc_min, , drop = FALSE]
+    up   <- filt[filt$logFC >=  lfc_min, , drop = FALSE]
+    down <- filt[filt$logFC <= -lfc_min, , drop = FALSE]
+    base <- paste0(prefix, "_FDR", gsub("\\.", "", sprintf("%.3f", q)), "_LFC", lfc_min)
+    write.table(filt, file.path(outdir, paste0(base, "_ALL.tsv")),  sep = "\t", quote = FALSE, row.names = TRUE)
+    write.table(up,   file.path(outdir, paste0(base, "_UP.tsv")),   sep = "\t", quote = FALSE, row.names = TRUE)
+    write.table(down, file.path(outdir, paste0(base, "_DOWN.tsv")), sep = "\t", quote = FALSE, row.names = TRUE)
+    message(sprintf("FDR<=%.3f & |log2FC|>=%.1f -> ALL:%d UP:%d DOWN:%d",
+                    q, lfc_min, nrow(filt), nrow(up), nrow(down)))
+  }
+}
+
+write_deg_sets(tt, prefix = "DEA_LUAD_Tumor_High_vs_Low")
+
+cat("\nGroup sizes:\n")
+print(table(group))
+
+```
